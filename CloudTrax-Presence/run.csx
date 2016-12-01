@@ -23,10 +23,11 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, IColle
     // var hmacHeader = req.Headers.GetValues("Signature").FirstOrDefault(); // retreive the Signature from the request header
     
     var hmacHeader;
+    var json;
     if (reg.Headers.TryGetValue("Signature",out hmacHeader)) //check for and retreive the Signature.
     { 
         //log.Info(hmacHeader);
-        var json = await req.Content.ReadAsStringAsync(); // get the Content into a string
+        json = await req.Content.ReadAsStringAsync(); // get the Content into a string
         //log.Info(json.ToString());
 
     }
