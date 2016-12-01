@@ -20,11 +20,18 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, IColle
         return req.CreateResponse(HttpStatusCode.InternalServerError,$"Unable to retreive shared secret.  Check for AppSettings: {sharedSecretKeyName}");
     }
 
-    var hmacHeader = req.Headers.GetValues("Signature").FirstOrDefault(); // retreive the Signature from the request header
-    //log.Info(hmacHeader);
+    // var hmacHeader = req.Headers.GetValues("Signature").FirstOrDefault(); // retreive the Signature from the request header
+    
+    var hmacHeader;
+    if (reg.Headers.TryGetValue("Signature",out hmacHeader)) //check for and retreive the Signature.
+    { 
+        //log.Info(hmacHeader);
+        var json = await req.Content.ReadAsStringAsync(); // get the Content into a string
+        //log.Info(json.ToString());
 
-    var json = await req.Content.ReadAsStringAsync(); // get the Content into a string
-    //log.Info(json.ToString());
+    }
+    
+    
 
 
 
