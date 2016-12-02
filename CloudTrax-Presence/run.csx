@@ -5,14 +5,17 @@ using System.Text;
 using System.Security.Cryptography;
 using Newtonsoft.Json;
 using System.Configuration;
+using Microsoft.WindowsAzure.Storage;
+using Microsoft.WindowsAzure.Storage.Table;
 
-public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, ICollector<ProbeTableEntity> outputTable, TraceWriter log)
+public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudTable outputTable, TraceWriter log)
 {
     log.Info("C# HTTP trigger function processed a request.");
     //log.Info(req.Headers.ToString());
 
-    string sharedSecretKeyName = "HMACSecret"; //the name of the key in your App.Settings
+    const string sharedSecretKeyName = "HMACSecret"; //the name of the key in your App.Settings
     string sharedSecretKey = ConfigurationManager.AppSettings[sharedSecretKeyName];
+
     //log.Info($"HMACSecret: {sharedSecretKey}");
     if (String.IsNullOrEmpty(sharedSecretKey)) //then we have a problem
     {
@@ -25,12 +28,6 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, IColle
     //log.Info(hmacHeader);
     var json = await req.Content.ReadAsStringAsync(); // get the Content into a string
     //log.Info(json.ToString());
-
-    
-    
-    
-
-
 
     //check values and validate Signature
 
@@ -53,27 +50,26 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, IColle
             log.Info($"Device Mac {PR.mac} Count {PR.count} Dates Seen {FromUnixTime(PR.first_seen).ToString("o")} - {FromUnixTime(PR.last_seen).ToString("o")}");
             //dateFormat @"dd\/MM\/yyyy HH:mm:ss"
 
-            ProbeTableEntity pte = new ProbeTableEntity() {
+            ProbeRequest pte = new ProbeRequest() {
                 PartitionKey = pdata.network_id.ToString(),
-                RowKey = PR.mac+"-"+PR.last_seen,
+                RowKey = PR.mac, //+"-"+PR.last_seen,
                 mac = PR.mac,
                 count = PR.count,
                 min_signal = PR.min_signal,
                 max_signal = PR.max_signal,
                 avg_signal = PR.avg_signal,
                 last_seen_signal = PR.last_seen_signal,
-                //last_seen = FromUnixTime(PR.last_seen),
-                //first_seen = FromUnixTime(PR.first_seen),
                 last_seen = PR.last_seen,
                 first_seen = PR.first_seen,
                 associated = PR.associated                
             };
-            outputTable.Add(pte);
 
+            //fire and forget
+            TableOperation operation = TableOperation.InsertOrReplace(pte);
+            TableResult result = outputTable.Execute(operation);
+            //TODO: Need to check the result             
  
         }
-
-        
         
         return req.CreateResponse(HttpStatusCode.OK);
     }   else {
@@ -129,7 +125,7 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, IColle
 
 */
     
-public class ProbeRequest
+public class ProbeRequest: TableEntity
 {
     public string mac { get; set; }
     public int count { get; set; }
@@ -150,11 +146,4 @@ public class CloudTraxPing
     public List<ProbeRequest> probe_requests { get; set; }
 }
 
-public class ProbeTableEntity : ProbeRequest
-{
-    public string PartitionKey { get; set; }
-    public string RowKey { get; set; }
- //   public new System.DateTime first_seen { get; set; }
- //   public new System.DateTime last_seen { get; set; }
-}
 #endregion
