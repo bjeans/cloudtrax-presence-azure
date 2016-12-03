@@ -9,7 +9,7 @@ using Newtonsoft.Json;
 public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudTable outputTable, TraceWriter log)
 {
     var json = await req.Content.ReadAsStringAsync(); // get the Content into a string
-    log.Info($"Received data: {json.ToString()}");
+    
     
     NetworkSecret ns = JsonConvert.DeserializeObject<NetworkSecret>(json); // parse the content as JSON
 
