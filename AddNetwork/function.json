@@ -1,4 +1,4 @@
-{
+﻿{
   "bindings": [
     {
       "authLevel": "anonymous",
@@ -17,16 +17,9 @@
     {
       "type": "table",
       "name": "outputTable",
-      "tableName": "CloudTraxPresence",
-      "connection": "AzureWebJobsStorage",
-      "direction": "out"
-    },
-        {
-      "type": "table",
-      "name": "inputTable",
       "tableName": "CloudTraxNetworks",
       "connection": "AzureWebJobsStorage",
-      "direction": "in"
+      "direction": "out"
     }
   ],
   "disabled": false

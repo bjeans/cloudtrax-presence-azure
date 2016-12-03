@@ -8,20 +8,10 @@ using System.Configuration;
 using Microsoft.WindowsAzure.Storage;
 using Microsoft.WindowsAzure.Storage.Table;
 
-public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudTable outputTable, TraceWriter log)
+public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudTable outputTable, CloudTable inputTable, TraceWriter log)
 {
     log.Info("C# HTTP trigger function processed a request.");
     //log.Info(req.Headers.ToString());
-
-    const string sharedSecretKeyName = "HMACSecret"; //the name of the key in your App.Settings
-    string sharedSecretKey = ConfigurationManager.AppSettings[sharedSecretKeyName];
-
-    //log.Info($"HMACSecret: {sharedSecretKey}");
-    if (String.IsNullOrEmpty(sharedSecretKey)) //then we have a problem
-    {
-        log.Info($"Unable to retreive shared secret.  Check for AppSettings: {sharedSecretKeyName}");
-        return req.CreateResponse(HttpStatusCode.InternalServerError,$"Unable to retreive shared secret.  Check for AppSettings: {sharedSecretKeyName}");
-    }
 
     var hmacHeader = req.Headers.GetValues("Signature").FirstOrDefault(); // retreive the Signature from the request header
 
@@ -32,50 +22,64 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
     //check values and validate Signature
 
     if (json!=null &&
-        hmacHeader!=null &&
+        hmacHeader!=null /* &&
         sharedSecretKey!=null &&
-        checkSignature(json.ToString(), hmacHeader, sharedSecretKey))
+         */
+        )
     {
-
-        log.Info("Signature match");
-        //do stuff here       
         
         CloudTraxPing pdata = JsonConvert.DeserializeObject<CloudTraxPing>(json); // parse the content as JSON
-        
-        log.Info($"AP MAC: {pdata.node_mac}"); //which node is Reporting
-        log.Info($"Number of reports: {pdata.probe_requests.Count}");
 
-        foreach ( ProbeRequest PR in pdata.probe_requests)
+        string sharedSecretKey = getSharedSecret(pdata.network_id.ToString(),inputTable); // get the network_id
+
+        if (String.IsNullOrEmpty(sharedSecretKey)) // if we don't have a shared secret we can't validate the message
         {
-            log.Info($"Device Mac {PR.mac} Count {PR.count} Dates Seen {FromUnixTime(PR.first_seen).ToString("o")} - {FromUnixTime(PR.last_seen).ToString("o")}");
-            //dateFormat @"dd\/MM\/yyyy HH:mm:ss"
+            
+            log.Info($"Unable to retreive shared secret.  Have you added this network?");
+            return req.CreateResponse(HttpStatusCode.InternalServerError,$"Unable to retreive shared secret.");
 
-            ProbeRequest pte = new ProbeRequest() {
-                PartitionKey = pdata.network_id.ToString(),
-                RowKey = PR.mac, //+"-"+PR.last_seen,
-                mac = PR.mac,
-                count = PR.count,
-                min_signal = PR.min_signal,
-                max_signal = PR.max_signal,
-                avg_signal = PR.avg_signal,
-                last_seen_signal = PR.last_seen_signal,
-                last_seen = PR.last_seen,
-                first_seen = PR.first_seen,
-                associated = PR.associated                
-            };
+        } else if (!checkSignature(json.ToString(), hmacHeader, sharedSecretKey)){
+            
+            log.Info("Signature mismatch");
+            return req.CreateResponse(HttpStatusCode.Forbidden, "Invalid Signature");
 
-            //fire and forget
-            TableOperation operation = TableOperation.InsertOrReplace(pte);
-            TableResult result = outputTable.Execute(operation);
-            //TODO: Need to check the result             
- 
-        }
+        } else{
         
-        return req.CreateResponse(HttpStatusCode.OK);
-    }   else {
-        log.Info("Signature mismatch");
-        return req.CreateResponse(HttpStatusCode.Forbidden, "Invalid Signature");
-    }     
+            log.Info("Signature match");
+        
+            log.Info($"AP MAC: {pdata.node_mac}"); //which node is Reporting
+            log.Info($"Number of reports: {pdata.probe_requests.Count}");
+
+            foreach ( ProbeRequest PR in pdata.probe_requests)
+            {
+                log.Info($"Device Mac {PR.mac} Count {PR.count} Dates Seen {FromUnixTime(PR.first_seen).ToString("o")} - {FromUnixTime(PR.last_seen).ToString("o")}");
+                //dateFormat @"dd\/MM\/yyyy HH:mm:ss"
+
+                ProbeRequest pte = new ProbeRequest() {
+                    PartitionKey = pdata.network_id.ToString(),
+                    RowKey = PR.mac,
+                    mac = PR.mac,
+                    count = PR.count,
+                    min_signal = PR.min_signal,
+                    max_signal = PR.max_signal,
+                    avg_signal = PR.avg_signal,
+                    last_seen_signal = PR.last_seen_signal,
+                    last_seen = PR.last_seen,
+                    first_seen = PR.first_seen,
+                    associated = PR.associated                
+                };
+
+                //fire and forget
+                TableOperation operation = TableOperation.InsertOrReplace(pte);
+                TableResult result = outputTable.Execute(operation);
+                //TODO: Need to check the result             
+    
+            }
+            return req.CreateResponse(HttpStatusCode.OK);    
+        }     
+    } else {
+        return req.CreateResponse(HttpStatusCode.InternalServerError, "Unknown problem occurred");
+    }
 }
 #region Helper Functions
 
@@ -116,6 +120,16 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
 
     }
 
+    public static string getSharedSecret (string network_id,CloudTable inputTable){
+        // PartitionKey = network_id
+        // RowKey = network_id
+        TableOperation operation = TableOperation.Retrieve<NetworkSecret>(network_id,network_id);
+        TableResult result = inputTable.Execute(operation);
+        NetworkSecret ns = (NetworkSecret)result.Result;        
+        return ns?.hashKey;
+        
+    }
+
 #endregion
 #region classes to support JSON DeserializeObject
 
@@ -144,6 +158,12 @@ public class CloudTraxPing
     public string node_mac { get; set; }
     public int version { get; set; }
     public List<ProbeRequest> probe_requests { get; set; }
+}
+
+public class NetworkSecret : TableEntity
+{
+    public string network_id { get; set; }
+    public string hashKey { get; set; }
 }
 
 #endregion
