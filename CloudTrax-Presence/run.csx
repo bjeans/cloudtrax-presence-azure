@@ -66,7 +66,9 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
                     last_seen_signal = PR.last_seen_signal,
                     last_seen = PR.last_seen,
                     first_seen = PR.first_seen,
-                    associated = PR.associated                
+                    associated = PR.associated,
+                    first_seenDT = FromUnixTime(PR.first_seen),
+                    last_seenDT = FromUnixTime(PR.last_seen)
                 };
 
                 //fire and forget
@@ -147,9 +149,11 @@ public class ProbeRequest: TableEntity
     public int max_signal { get; set; }
     public int avg_signal { get; set; }
     public int last_seen_signal { get; set; }
+    public DateTime first_seenDT {get; set;}
+    public DateTime last_seenDT {get; set;}
+    public bool associated { get; set; }
     public int first_seen { get; set; }
     public int last_seen { get; set; }
-    public bool associated { get; set; }
 }
 
 public class CloudTraxPing
