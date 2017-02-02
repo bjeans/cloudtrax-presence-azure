@@ -1,5 +1,5 @@
 #r "Newtonsoft.Json"
-#load "..\SharedClasses.csx"
+#load "..\Shared\SharedClasses.csx"
 
 using System.Net;
 using System.Text;
