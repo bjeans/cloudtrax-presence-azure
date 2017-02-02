@@ -39,7 +39,7 @@ public class ProbeRequest: TableEntity
 
 public class CloudTraxPing
 {
-    public int network_id { get; set; }
+    public string network_id { get; set; }
     public string node_mac { get; set; }
     public int version { get; set; }
     public List<ProbeRequest> probe_requests { get; set; }

@@ -12,41 +12,68 @@ using Microsoft.WindowsAzure.Storage.Table;
 public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudTable outputTable, CloudTable inputTable, TraceWriter log)
 {
     log.Info("C# HTTP trigger function processed a request.");
-    //log.Info(req.Headers.ToString());
+    
+    string hmacHeader;
+    IEnumerable<string> sigValues;
 
-    var hmacHeader = req.Headers.GetValues("Signature").FirstOrDefault(); // retreive the Signature from the request header
+    if (req.Headers.TryGetValues("Signature", out sigValues))
+    {
+        hmacHeader = sigValues.FirstOrDefault();
+        //log.Info(hmacHeader);
+    
+    } else {
+        // can't find the Signature header so aborting
+        return req.CreateResponse(HttpStatusCode.BadRequest, "Missing Signature Header");
+    }
 
-    //log.Info(hmacHeader);
     var json = await req.Content.ReadAsStringAsync(); // get the Content into a string
-    //log.Info(json.ToString());
 
-    //check values and validate Signature
-
-    if (json!=null &&
-        hmacHeader!=null /* &&
-        sharedSecretKey!=null &&
-         */
-        )
+    if (String.IsNullOrEmpty(json) ||  String.IsNullOrEmpty(hmacHeader) ) //we are missing either the signature from the header of the actual JSON content
+    {
+        if (String.IsNullOrEmpty(hmacHeader)) 
+        {
+            return req.CreateResponse(HttpStatusCode.BadRequest, "Missing Signature"); //should ever get here as this should be caught above
+        } else if (String.IsNullOrEmpty(json)) 
+        {
+            return req.CreateResponse(HttpStatusCode.BadRequest, "Missing body");
+        }        
+    }
+    else // now we can start to process the data we received
     {
         
         CloudTraxPing pdata = JsonConvert.DeserializeObject<CloudTraxPing>(json); // parse the content as JSON
 
-        string sharedSecretKey = getSharedSecret(pdata.network_id.ToString(),inputTable); // get the network_id
+        string network_id = pdata?.network_id; // get the network_id
+        string sharedSecretKey;
+
+        log.Info($"network_id: {network_id}");
+
+        if (String.IsNullOrEmpty(network_id)){
+            log.Info($"No network_id found");
+            return req.CreateResponse(HttpStatusCode.BadRequest,$"Unable to determine reporting network_id");
+        } else {
+
+            sharedSecretKey = getSharedSecret(network_id,inputTable); // lookup the sharedSecret from storage table
+        }
 
         if (String.IsNullOrEmpty(sharedSecretKey)) // if we don't have a shared secret we can't validate the message
         {
             
-            log.Info($"Unable to retreive shared secret.  Have you added this network?");
-            return req.CreateResponse(HttpStatusCode.InternalServerError,$"Unable to retreive shared secret.");
+            log.Info($"Unable to retreive shared secret for network {network_id}.  Have you added this network?");
+            return req.CreateResponse(HttpStatusCode.BadRequest,$"Unable to retreive shared secret.");
 
-        } else if (!checkSignature(json.ToString(), hmacHeader, sharedSecretKey)){
+        } 
+        else if (checkSignature(json.ToString(), hmacHeader, sharedSecretKey) == false)     //check values and validate Signature
+        {
             
             log.Info("Signature mismatch");
             return req.CreateResponse(HttpStatusCode.Forbidden, "Invalid Signature");
 
-        } else{
+        } 
+        else
+        {
         
-            log.Info("Signature match");
+            //log.Info("Signature match");
         
             log.Info($"AP MAC: {pdata.node_mac}"); //which node is Reporting
             log.Info($"Number of reports: {pdata.probe_requests.Count}");
@@ -57,7 +84,7 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
                 //dateFormat @"dd\/MM\/yyyy HH:mm:ss"
 
                 ProbeRequest pte = new ProbeRequest() {
-                    PartitionKey = pdata.network_id.ToString(),
+                    PartitionKey = network_id,
                     RowKey = PR.mac,
                     mac = PR.mac,
                     count = PR.count,
@@ -80,9 +107,11 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
             }
             return req.CreateResponse(HttpStatusCode.OK);    
         }     
-    } else {
-        return req.CreateResponse(HttpStatusCode.InternalServerError, "Unknown problem occurred");
-    }
+    } 
+    
+    //if we get here - return a generic error
+    return req.CreateResponse(HttpStatusCode.InternalServerError, "Unknown problem occurred");
+
 }
 #region Helper Functions
 
@@ -121,11 +150,15 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
     public static string getSharedSecret (string network_id,CloudTable inputTable){
         // PartitionKey = network_id
         // RowKey = network_id
-        TableOperation operation = TableOperation.Retrieve<NetworkSecret>(network_id,network_id);
-        TableResult result = inputTable.Execute(operation);
-        NetworkSecret ns = (NetworkSecret)result.Result;        
-        return ns?.hashKey;
-        
+        if (String.IsNullOrEmpty(network_id)){
+            return null; // network_id can't be null for table lookup
+        } else {
+            
+            TableOperation operation = TableOperation.Retrieve<NetworkSecret>(network_id,network_id);
+            TableResult result = inputTable.Execute(operation);
+            NetworkSecret ns = (NetworkSecret)result.Result;        
+            return ns?.hashKey;
+        }
     }
 
 #endregion
