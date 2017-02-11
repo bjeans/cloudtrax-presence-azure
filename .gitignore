@@ -19,6 +19,7 @@ project.lock.json
 
 /packages
 /TestResults
+/ArmTemplate
 
 /tools/NuGet.exe
 /App_Data
