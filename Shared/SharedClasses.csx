@@ -10,6 +10,58 @@ using Microsoft.WindowsAzure.Storage.Table;
         return epoch.AddSeconds(unixTime);
     }
 
+
+#region Helper Functions
+
+
+
+    // from http://billatnapier.com/security01.aspx
+    public static string ByteToString(byte [] buff)
+    {
+        string sbinary="";
+
+        for (int i=0;i<buff.Length;i++)
+        {
+            sbinary+=buff[i].ToString("X2"); // hex format
+        }
+    return(sbinary);
+    }
+
+    // check HMAC Signature - https://help.cloudtrax.com/hc/en-us/articles/207985916-CloudTrax-Presence-Reporting-API
+    public static bool checkSignature(string theMessage, string theSignature, string theKey)
+    {
+        
+        System.Text.ASCIIEncoding encoding = new System.Text.ASCIIEncoding();
+        byte[] keyByte = encoding.GetBytes(theKey);
+
+        System.Security.Cryptography.HMACSHA256 hmacsha256 = new System.Security.Cryptography.HMACSHA256(keyByte);
+
+        byte[] messageBytes = encoding.GetBytes(theMessage);
+        byte[] hashmessage = hmacsha256.ComputeHash(messageBytes);
+        
+        string hashString = ByteToString(hashmessage);
+
+        return (hashString.ToLower()==theSignature.ToLower()); //convert both to lowercase
+
+    }
+
+    public static string getSharedSecret (string network_id,CloudTable inputTable){
+        // PartitionKey = network_id
+        // RowKey = network_id
+        if (String.IsNullOrEmpty(network_id)){
+            return null; // network_id can't be null for table lookup
+        } else {
+            
+            TableOperation operation = TableOperation.Retrieve<NetworkSecret>(network_id,network_id);
+            TableResult result = inputTable.Execute(operation);
+            NetworkSecret ns = (NetworkSecret)result.Result;        
+            return ns?.hashKey;
+        }
+    }
+
+#endregion
+
+
 #region classes to support JSON DeserializeObject
 
 /* Sample data from https://help.cloudtrax.com/hc/en-us/articles/207985916-CloudTrax-Presence-Reporting-API
@@ -18,7 +70,7 @@ using Microsoft.WindowsAzure.Storage.Table;
 
 */
 
-  
+
 public class ProbeRequest: TableEntity
 {
     
@@ -52,4 +104,12 @@ public class NetworkSecret : TableEntity
     public string hashKey { get; set; }
 }
 
+#endregion
+#region Class to support custom AppInsight event logging
+public class CustomEvent
+{
+    public string EventName { get; set; }
+    public Dictionary<string, string> Properties { get; set; }
+    public Dictionary<string, double> Metrics { get; set; }
+}
 #endregion
