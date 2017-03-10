@@ -13,11 +13,15 @@ using Microsoft.ApplicationInsights;
 
 
 private static readonly string FunctionName = "CloudTrax-AddNetwork";
+private static string _invocationId; // https://zimmergren.net/getting-the-instance-id-of-a-running-azure-function-with-executioncontext-invocationid/
 
-public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudTable outputTable, TraceWriter log)
+
+public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudTable outputTable, ExecutionContext exCtx,TraceWriter log)
 {
+    _invocationId = exCtx.InvocationId.ToString();
+
     var telemetryClient = ApplicationInsights.CreateTelemetryClient();
-    telemetryClient.TrackStatus(FunctionName, "" , "Function triggered by http request");
+    telemetryClient.TrackStatus(FunctionName, _invocationId , "Function triggered by http request");
 
     var json = await req.Content.ReadAsStringAsync(); // get the Content into a string
     
@@ -25,7 +29,7 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
 
     if (ns.network_id == null || ns.hashKey ==null)
     {
-        telemetryClient.TrackStatus(FunctionName, "" , "Unable to create new network",false);
+        telemetryClient.TrackStatus(FunctionName, _invocationId , "Unable to create new network",false);
         return req.CreateResponse(HttpStatusCode.BadRequest, "Please pass a network name and shared key in the request body");
     } else {
 
@@ -36,7 +40,7 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
         TableResult result = outputTable.Execute(operation);
         //TODO: Need to check the result
 
-        telemetryClient.TrackStatus(FunctionName, "" , $"New network ({ns.network_id}) created",true);   
+        telemetryClient.TrackStatus(FunctionName, _invocationId , $"New network ({ns.network_id}) created",true);   
         return req.CreateResponse(HttpStatusCode.Created);
     }
 
