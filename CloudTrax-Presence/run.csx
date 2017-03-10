@@ -15,12 +15,15 @@ using Microsoft.WindowsAzure.Storage.Table;
 using Microsoft.ApplicationInsights;
 
 private static readonly string FunctionName = "CloudTrax-Presense";
-public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudTable outputTable, CloudTable inputTable, TraceWriter log)
+private static string _invocationId; // https://zimmergren.net/getting-the-instance-id-of-a-running-azure-function-with-executioncontext-invocationid/
+public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudTable outputTable, CloudTable inputTable, ExecutionContext exCtx, TraceWriter log)
 {
-    log.Info("C# HTTP trigger function processed a request.");
+    _invocationId = exCtx.InvocationId.ToString();
+
+    log.Info($"C# HTTP trigger function processed a request.");
     
     var telemetryClient = ApplicationInsights.CreateTelemetryClient();
-    telemetryClient.TrackStatus(FunctionName, "" , "Function triggered by http request");
+    telemetryClient.TrackStatus(FunctionName, _invocationId , "Function triggered by http request");
     
     string hmacHeader;
     IEnumerable<string> sigValues;
@@ -31,7 +34,7 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
         //log.Info(hmacHeader);
     
     } else {
-         telemetryClient.TrackStatus(FunctionName, "" , "Invalid or missing signature",false);
+         telemetryClient.TrackStatus(FunctionName,_invocationId, "Invalid or missing signature",false);
         // can't find the Signature header so aborting
         return req.CreateResponse(HttpStatusCode.BadRequest, "Missing Signature Header");
     }
@@ -42,11 +45,11 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
     {
         if (String.IsNullOrEmpty(hmacHeader)) 
         {
-            telemetryClient.TrackStatus(FunctionName, "" , "Invalid or missing signature",false);
+            telemetryClient.TrackStatus(FunctionName,_invocationId, "Invalid or missing signature",false);
             return req.CreateResponse(HttpStatusCode.BadRequest, "Missing Signature"); //should ever get here as this should be caught above
         } else if (String.IsNullOrEmpty(json)) 
         {
-            telemetryClient.TrackStatus(FunctionName, "" , "Invalid or missing body",false);
+            telemetryClient.TrackStatus(FunctionName,_invocationId, "Invalid or missing body",false);
             return req.CreateResponse(HttpStatusCode.BadRequest, "Missing body");
         }        
     }
@@ -62,7 +65,7 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
 
         if (String.IsNullOrEmpty(network_id)){
             log.Info($"No network_id found");
-            telemetryClient.TrackStatus(FunctionName, "" , "Unable to determine reporting network_id",false);
+            telemetryClient.TrackStatus(FunctionName,_invocationId, "Unable to determine reporting network_id",false);
             return req.CreateResponse(HttpStatusCode.BadRequest,$"Unable to determine reporting network_id");
         } else {
 
@@ -73,7 +76,7 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
         {
             
             log.Info($"Unable to retreive shared secret for network {network_id}.  Have you added this network?");
-            telemetryClient.TrackStatus(FunctionName, "" , $"Unable to retreive shared secret for network {network_id}.  Have you added this network?",false);
+            telemetryClient.TrackStatus(FunctionName,_invocationId, $"Unable to retreive shared secret for network {network_id}.  Have you added this network?",false);
             return req.CreateResponse(HttpStatusCode.BadRequest,$"Unable to retreive shared secret.");
 
         } 
@@ -81,7 +84,7 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
         {
             
             log.Info("Signature mismatch");
-            telemetryClient.TrackStatus(FunctionName, "" , $"Invalid Signature.  network_id {network_id}",false);
+            telemetryClient.TrackStatus(FunctionName,_invocationId, $"Invalid Signature.  network_id {network_id}",false);
             return req.CreateResponse(HttpStatusCode.Forbidden, "Invalid Signature");
 
         } 
@@ -120,64 +123,15 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
                 //TODO: Need to check the result             
     
             }
-            telemetryClient.TrackStatus(FunctionName, "" , $"Presense data successfully captured {pdata.probe_requests.Count} reports for Network {network_id} ",true);
+            telemetryClient.TrackStatus(FunctionName,_invocationId, $"Presense data successfully captured {pdata.probe_requests.Count} reports for Network {network_id} ",true);
 
             return req.CreateResponse(HttpStatusCode.OK);    
         }     
     } 
     
     //if we get here - return a generic error
-    telemetryClient.TrackStatus(FunctionName, "" , "Unknown problem occurred",false);
+    telemetryClient.TrackStatus(FunctionName,_invocationId, "Unknown problem occurred",false);
 
     return req.CreateResponse(HttpStatusCode.InternalServerError, "Unknown problem occurred");
 
 }
-#region Helper Functions
-
-
-
-    // from http://billatnapier.com/security01.aspx
-    public static string ByteToString(byte [] buff)
-    {
-        string sbinary="";
-
-        for (int i=0;i<buff.Length;i++)
-        {
-            sbinary+=buff[i].ToString("X2"); // hex format
-        }
-    return(sbinary);
-    }
-
-    // check HMAC Signature - https://help.cloudtrax.com/hc/en-us/articles/207985916-CloudTrax-Presence-Reporting-API
-    public static bool checkSignature(string theMessage, string theSignature, string theKey)
-    {
-        
-        System.Text.ASCIIEncoding encoding = new System.Text.ASCIIEncoding();
-        byte[] keyByte = encoding.GetBytes(theKey);
-
-        System.Security.Cryptography.HMACSHA256 hmacsha256 = new System.Security.Cryptography.HMACSHA256(keyByte);
-
-        byte[] messageBytes = encoding.GetBytes(theMessage);
-        byte[] hashmessage = hmacsha256.ComputeHash(messageBytes);
-        
-        string hashString = ByteToString(hashmessage);
-
-        return (hashString.ToLower()==theSignature.ToLower()); //convert both to lowercase
-
-    }
-
-    public static string getSharedSecret (string network_id,CloudTable inputTable){
-        // PartitionKey = network_id
-        // RowKey = network_id
-        if (String.IsNullOrEmpty(network_id)){
-            return null; // network_id can't be null for table lookup
-        } else {
-            
-            TableOperation operation = TableOperation.Retrieve<NetworkSecret>(network_id,network_id);
-            TableResult result = inputTable.Execute(operation);
-            NetworkSecret ns = (NetworkSecret)result.Result;        
-            return ns?.hashKey;
-        }
-    }
-
-#endregion
