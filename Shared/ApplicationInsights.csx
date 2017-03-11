@@ -4,8 +4,10 @@
 #load "Settings.csx"
 
 using Microsoft.ApplicationInsights;
+using Microsoft.ApplicationInsights.DataContracts;
 using System.Reflection;
 using System.Web.Hosting;
+using System.Net;
 
 // from https://github.com/Azure-Samples/ContosoInsurance/blob/master/Src/Cloud/ContosoInsurance.Function/Shared/ApplicationInsights.csx
 
@@ -55,9 +57,32 @@ private static Dictionary<string, string> GetCommonProperties(string logType, st
     {
         { "LogType", logType},
         { "FunctionName", functionName },
-        //{ "Host",  HostingEnvironment.ApplicationHost.GetSiteName() },
+        { "Host",  HostingEnvironment.ApplicationHost?.GetSiteName() },
         { "CorrelationId", correlationId },
         { "Version", Assembly.GetExecutingAssembly().GetName().Version.ToString() },
         { "FunctionsExtensionVersion", Settings.FunctionsExtensionVersion }
     };
 }
+
+//https://github.com/Microsoft/ApplicationInsights-Home/blob/master/Samples/AzureEmailService/WorkerRoleB/Telemetry/RequestTelemetryHelper.cs
+
+        public static RequestTelemetry StartNewRequest(string name, DateTimeOffset startTime, string CorrelationId)
+        {
+            var request = new RequestTelemetry();
+
+            request.Name = name;
+            request.Timestamp = startTime;
+            request.Id = CorrelationId;
+
+            return request;
+        }
+
+
+        public static void DispatchRequest(this TelemetryClient client, RequestTelemetry request, TimeSpan duration, HttpStatusCode statusCode,bool success)
+        {
+            request.Duration = duration;
+            request.Success = success;
+            request.ResponseCode = $"{(int)statusCode} - "+statusCode.ToString();
+
+            client.TrackRequest(request);
+        }

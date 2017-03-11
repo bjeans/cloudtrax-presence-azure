@@ -13,6 +13,7 @@ using System.Configuration;
 using Microsoft.WindowsAzure.Storage;
 using Microsoft.WindowsAzure.Storage.Table;
 using Microsoft.ApplicationInsights;
+using System.Diagnostics;
 
 private static readonly string FunctionName = "CloudTrax-Presense";
 private static string _invocationId; // https://zimmergren.net/getting-the-instance-id-of-a-running-azure-function-with-executioncontext-invocationid/
@@ -20,21 +21,34 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
 {
     _invocationId = exCtx.InvocationId.ToString();
 
-    log.Info($"C# HTTP trigger function processed a request.");
-    
     var telemetryClient = ApplicationInsights.CreateTelemetryClient();
-    telemetryClient.TrackStatus(FunctionName, _invocationId , "Function triggered by http request");
+    var request = StartNewRequest(FunctionName, DateTimeOffset.UtcNow,_invocationId);
+    request.Url = req.RequestUri;
+    Stopwatch requestTimer = Stopwatch.StartNew();
     
+    try {
+        HttpResponseMessage response = await ProcessRequest(req,outputTable,inputTable);
+
+        telemetryClient.DispatchRequest(request,requestTimer.Elapsed,response.StatusCode,response.IsSuccessStatusCode);
+        return response;
+
+    } catch (Exception ex) {
+        telemetryClient.TrackException(FunctionName,_invocationId,ex);
+        return req.CreateResponse(HttpStatusCode.InternalServerError);
+    }
+    
+}
+
+private static async Task<HttpResponseMessage> ProcessRequest(HttpRequestMessage req, CloudTable outputTable, CloudTable inputTable)
+{
     string hmacHeader;
     IEnumerable<string> sigValues;
 
     if (req.Headers.TryGetValues("Signature", out sigValues))
     {
         hmacHeader = sigValues.FirstOrDefault();
-        //log.Info(hmacHeader);
     
     } else {
-         telemetryClient.TrackStatus(FunctionName,_invocationId, "Invalid or missing signature",false);
         // can't find the Signature header so aborting
         return req.CreateResponse(HttpStatusCode.BadRequest, "Missing Signature Header");
     }
@@ -45,11 +59,9 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
     {
         if (String.IsNullOrEmpty(hmacHeader)) 
         {
-            telemetryClient.TrackStatus(FunctionName,_invocationId, "Invalid or missing signature",false);
             return req.CreateResponse(HttpStatusCode.BadRequest, "Missing Signature"); //should ever get here as this should be caught above
         } else if (String.IsNullOrEmpty(json)) 
         {
-            telemetryClient.TrackStatus(FunctionName,_invocationId, "Invalid or missing body",false);
             return req.CreateResponse(HttpStatusCode.BadRequest, "Missing body");
         }        
     }
@@ -61,44 +73,30 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
         string network_id = pdata?.network_id; // get the network_id
         string sharedSecretKey;
 
-        log.Info($"network_id: {network_id}");
+        //log.Info($"network_id: {network_id}");
 
         if (String.IsNullOrEmpty(network_id)){
-            log.Info($"No network_id found");
-            telemetryClient.TrackStatus(FunctionName,_invocationId, "Unable to determine reporting network_id",false);
             return req.CreateResponse(HttpStatusCode.BadRequest,$"Unable to determine reporting network_id");
         } else {
-
             sharedSecretKey = getSharedSecret(network_id,inputTable); // lookup the sharedSecret from storage table
         }
 
         if (String.IsNullOrEmpty(sharedSecretKey)) // if we don't have a shared secret we can't validate the message
-        {
-            
-            log.Info($"Unable to retreive shared secret for network {network_id}.  Have you added this network?");
-            telemetryClient.TrackStatus(FunctionName,_invocationId, $"Unable to retreive shared secret for network {network_id}.  Have you added this network?",false);
+        {            
             return req.CreateResponse(HttpStatusCode.BadRequest,$"Unable to retreive shared secret.");
-
         } 
         else if (checkSignature(json.ToString(), hmacHeader, sharedSecretKey) == false)     //check values and validate Signature
-        {
-            
-            log.Info("Signature mismatch");
-            telemetryClient.TrackStatus(FunctionName,_invocationId, $"Invalid Signature.  network_id {network_id}",false);
+        {                        
             return req.CreateResponse(HttpStatusCode.Forbidden, "Invalid Signature");
-
         } 
         else
-        {
-        
-            //log.Info("Signature match");
-        
-            log.Info($"AP MAC: {pdata.node_mac}"); //which node is Reporting
-            log.Info($"Number of reports: {pdata.probe_requests.Count}");
+        {        
+            //log.Info($"AP MAC: {pdata.node_mac}"); //which node is Reporting
+            //log.Info($"Number of reports: {pdata.probe_requests.Count}");
 
             foreach ( ProbeRequest PR in pdata.probe_requests)
             {
-                log.Info($"Device Mac {PR.mac} Count {PR.count} Dates Seen {FromUnixTime(PR.first_seen).ToString("o")} - {FromUnixTime(PR.last_seen).ToString("o")}");
+                //log.Info($"Device Mac {PR.mac} Count {PR.count} Dates Seen {FromUnixTime(PR.first_seen).ToString("o")} - {FromUnixTime(PR.last_seen).ToString("o")}");
                 //dateFormat @"dd\/MM\/yyyy HH:mm:ss"
 
                 ProbeRequest pte = new ProbeRequest() {
@@ -121,17 +119,19 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
                 TableOperation operation = TableOperation.InsertOrReplace(pte);
                 TableResult result = outputTable.Execute(operation);
                 //TODO: Need to check the result             
+
+                //TelemetryRequest.Metrics.Add(new KeyValuePair<string, double>("DevicesSeen", pdata.probe_requests.Count));
+
     
             }
-            telemetryClient.TrackStatus(FunctionName,_invocationId, $"Presense data successfully captured {pdata.probe_requests.Count} reports for Network {network_id} ",true);
-
+         
             return req.CreateResponse(HttpStatusCode.OK);    
         }     
     } 
     
     //if we get here - return a generic error
-    telemetryClient.TrackStatus(FunctionName,_invocationId, "Unknown problem occurred",false);
 
     return req.CreateResponse(HttpStatusCode.InternalServerError, "Unknown problem occurred");
+
 
 }

@@ -10,6 +10,7 @@ using System.Net;
 using Microsoft.WindowsAzure.Storage.Table;
 using Newtonsoft.Json;
 using Microsoft.ApplicationInsights;
+using System.Diagnostics;
 
 
 private static readonly string FunctionName = "CloudTrax-AddNetwork";
@@ -19,17 +20,31 @@ private static string _invocationId; // https://zimmergren.net/getting-the-insta
 public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudTable outputTable, ExecutionContext exCtx,TraceWriter log)
 {
     _invocationId = exCtx.InvocationId.ToString();
-
     var telemetryClient = ApplicationInsights.CreateTelemetryClient();
-    telemetryClient.TrackStatus(FunctionName, _invocationId , "Function triggered by http request");
+    var request = StartNewRequest(FunctionName, DateTimeOffset.UtcNow,_invocationId);
+    request.Url = req.RequestUri;
+    Stopwatch requestTimer = Stopwatch.StartNew();
 
+    try{
+        HttpResponseMessage response = await ProcessRequest(req,outputTable);
+
+        telemetryClient.DispatchRequest(request,requestTimer.Elapsed,response.StatusCode,response.IsSuccessStatusCode);
+        return response;
+
+    } catch (Exception ex) {
+        telemetryClient.TrackException(FunctionName,_invocationId,ex);
+        return req.CreateResponse(HttpStatusCode.InternalServerError);
+    }
+}
+
+private static async Task<HttpResponseMessage> ProcessRequest(HttpRequestMessage req, CloudTable outputTable)
+{
     var json = await req.Content.ReadAsStringAsync(); // get the Content into a string
     
     NetworkSecret ns = JsonConvert.DeserializeObject<NetworkSecret>(json); // parse the content as JSON
 
     if (ns.network_id == null || ns.hashKey ==null)
-    {
-        telemetryClient.TrackStatus(FunctionName, _invocationId , "Unable to create new network",false);
+    {        
         return req.CreateResponse(HttpStatusCode.BadRequest, "Please pass a network name and shared key in the request body");
     } else {
 
@@ -39,12 +54,7 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
         TableOperation operation = TableOperation.InsertOrReplace(ns);
         TableResult result = outputTable.Execute(operation);
         //TODO: Need to check the result
-
-        telemetryClient.TrackStatus(FunctionName, _invocationId , $"New network ({ns.network_id}) created",true);   
-        return req.CreateResponse(HttpStatusCode.Created);
+               
+        return req.CreateResponse(HttpStatusCode.Created,$"New network ({ns.network_id}) added");
     }
-
-    
-    
 }
-
