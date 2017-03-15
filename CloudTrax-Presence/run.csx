@@ -15,19 +15,22 @@ using Microsoft.WindowsAzure.Storage.Table;
 using Microsoft.ApplicationInsights;
 using System.Diagnostics;
 
-private static readonly string FunctionName = "CloudTrax-Presense";
+private static readonly string FunctionName = "CloudTrax-Presence";
 private static string _invocationId; // https://zimmergren.net/getting-the-instance-id-of-a-running-azure-function-with-executioncontext-invocationid/
 public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudTable outputTable, CloudTable inputTable, ExecutionContext exCtx, TraceWriter log)
 {
     _invocationId = exCtx.InvocationId.ToString();
 
     var telemetryClient = ApplicationInsights.CreateTelemetryClient();
+    telemetryClient.Context.Operation.Id=_invocationId;
+    telemetryClient.Context.Operation.Name=FunctionName;
+
     var request = StartNewRequest(FunctionName, DateTimeOffset.UtcNow,_invocationId);
     request.Url = req.RequestUri;
     Stopwatch requestTimer = Stopwatch.StartNew();
     
     try {
-        HttpResponseMessage response = await ProcessRequest(req,outputTable,inputTable);
+        HttpResponseMessage response = await ProcessRequest(req,outputTable,inputTable,telemetryClient);
 
         telemetryClient.DispatchRequest(request,requestTimer.Elapsed,response.StatusCode,response.IsSuccessStatusCode);
         return response;
@@ -39,7 +42,10 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
     
 }
 
-private static async Task<HttpResponseMessage> ProcessRequest(HttpRequestMessage req, CloudTable outputTable, CloudTable inputTable)
+// private static async Task<HttpResponseMessage> ProcessRequest(HttpRequestMessage req, CloudTable outputTable, CloudTable inputTable){
+//     return await ProcessRequest(req,outputTable,inputTable,null);
+// }
+private static async Task<HttpResponseMessage> ProcessRequest(HttpRequestMessage req, CloudTable outputTable, CloudTable inputTable, TelemetryClient telemetry)
 {
     string hmacHeader;
     IEnumerable<string> sigValues;
@@ -120,7 +126,10 @@ private static async Task<HttpResponseMessage> ProcessRequest(HttpRequestMessage
                 TableResult result = outputTable.Execute(operation);
                 //TODO: Need to check the result             
 
-                //TelemetryRequest.Metrics.Add(new KeyValuePair<string, double>("DevicesSeen", pdata.probe_requests.Count));
+                if (telemetry!=null){
+                    telemetry.TrackMetric("Devices Seen", pdata.probe_requests.Count);
+                }
+                
 
     
             }
