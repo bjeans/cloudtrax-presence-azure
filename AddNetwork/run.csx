@@ -21,6 +21,10 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, CloudT
 {
     _invocationId = exCtx.InvocationId.ToString();
     var telemetryClient = ApplicationInsights.CreateTelemetryClient();
+    telemetryClient.Context.Operation.Id=_invocationId;
+    telemetryClient.Context.Operation.Name=FunctionName;
+    //telemetryClient.TrackEvent(FunctionName);
+
     var request = StartNewRequest(FunctionName, DateTimeOffset.UtcNow,_invocationId);
     request.Url = req.RequestUri;
     Stopwatch requestTimer = Stopwatch.StartNew();
