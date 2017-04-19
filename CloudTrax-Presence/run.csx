@@ -13,6 +13,7 @@ using System.Configuration;
 using Microsoft.WindowsAzure.Storage;
 using Microsoft.WindowsAzure.Storage.Table;
 using Microsoft.ApplicationInsights;
+using Microsoft.ApplicationInsights.DataContracts;  //For DependencyTelemetry - https://docs.microsoft.com/en-us/dotnet/api/microsoft.applicationinsights.datacontracts.dependencytelemetry
 using System.Diagnostics;
 
 private static readonly string FunctionName = "CloudTrax-Presence";
@@ -100,13 +101,18 @@ private static async Task<HttpResponseMessage> ProcessRequest(HttpRequestMessage
             //log.Info($"AP MAC: {pdata.node_mac}"); //which node is Reporting
             //log.Info($"Number of reports: {pdata.probe_requests.Count}");
 
+            TableBatchOperation tbo = new TableBatchOperation();
+            var batchsuccess = false;
+            var batchstartTime = DateTime.UtcNow;
+            var batchtimer = System.Diagnostics.Stopwatch.StartNew();
+
             foreach ( ProbeRequest PR in pdata.probe_requests)
             {
                 //log.Info($"Device Mac {PR.mac} Count {PR.count} Dates Seen {FromUnixTime(PR.first_seen).ToString("o")} - {FromUnixTime(PR.last_seen).ToString("o")}");
                 //dateFormat @"dd\/MM\/yyyy HH:mm:ss"
 
                 ProbeRequest pte = new ProbeRequest() {
-                    PartitionKey = network_id,
+                    PartitionKey = network_id, //needs to be the same for the duration to ensure TableBatchOperation works (requires same PartitionKey)
                     RowKey = PR.mac,
                     mac = PR.mac,
                     count = PR.count,
@@ -121,31 +127,30 @@ private static async Task<HttpResponseMessage> ProcessRequest(HttpRequestMessage
                     last_seenDT = FromUnixTime(PR.last_seen)
                 };
 
-
-                // https://docs.microsoft.com/en-us/azure/application-insights/app-insights-api-custom-events-metrics#trackdependency
-                var success = false;
-                var startTime = DateTime.UtcNow;
-                var timer = System.Diagnostics.Stopwatch.StartNew();
-                try
-                {
-                    //fire and forget
-                    TableOperation operation = TableOperation.InsertOrReplace(pte);
-
-                    //should look at making this call async
-                    TableResult result = outputTable.Execute(operation);
-                    //TODO: Need to check the result             
-                    success = true;
-                }
-                finally
-                {
-                    timer.Stop();
-                    telemetry.TrackDependency("AzureTables", "InsertOrReplace", startTime, timer.Elapsed, success);
-                }
+                // add to Batch
+                tbo.InsertOrReplace(pte);
+           
+            } //foreach
+            
+            try{  //exectue the TableBatchOperation
+                batchsuccess=true; //assume true unless results show otherwise
+                var result = outputTable.ExecuteBatch(tbo);
+                //TODO: Parse results to confirm success               
+            
+            } finally {
+                batchtimer.Stop();
+                if (telemetry!=null){
+                    // https://docs.microsoft.com/en-us/dotnet/api/microsoft.applicationinsights.datacontracts.dependencytelemetry?view=appinsights-2.3.0-beta3
+                    DependencyTelemetry dp = new DependencyTelemetry("AzureTables", "ExecuteBatch", batchstartTime, batchtimer.Elapsed, batchsuccess);
+                    //dp.ResultCode="200";
+                    telemetry.TrackDependency(dp); 
+                    telemetry.TrackMetric("Devices Seen", pdata.probe_requests.Count);
+                }   
                 
             }
-            if (telemetry!=null){
-                telemetry.TrackMetric("Devices Seen", pdata.probe_requests.Count);
-            }
+            
+
+            
             return req.CreateResponse(HttpStatusCode.OK);    
         }     
     } 
