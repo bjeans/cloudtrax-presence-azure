@@ -121,19 +121,31 @@ private static async Task<HttpResponseMessage> ProcessRequest(HttpRequestMessage
                     last_seenDT = FromUnixTime(PR.last_seen)
                 };
 
-                //fire and forget
-                TableOperation operation = TableOperation.InsertOrReplace(pte);
-                TableResult result = outputTable.Execute(operation);
-                //TODO: Need to check the result             
 
-                if (telemetry!=null){
-                    telemetry.TrackMetric("Devices Seen", pdata.probe_requests.Count);
+                // https://docs.microsoft.com/en-us/azure/application-insights/app-insights-api-custom-events-metrics#trackdependency
+                var success = false;
+                var startTime = DateTime.UtcNow;
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    //fire and forget
+                    TableOperation operation = TableOperation.InsertOrReplace(pte);
+
+                    //should look at making this call async
+                    TableResult result = outputTable.Execute(operation);
+                    //TODO: Need to check the result             
+                    success = true;
+                }
+                finally
+                {
+                    timer.Stop();
+                    telemetry.TrackDependency("AzureTables", "InsertOrReplace", startTime, timer.Elapsed, success);
                 }
                 
-
-    
             }
-         
+            if (telemetry!=null){
+                telemetry.TrackMetric("Devices Seen", pdata.probe_requests.Count);
+            }
             return req.CreateResponse(HttpStatusCode.OK);    
         }     
     } 
